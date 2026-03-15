@@ -1,0 +1,348 @@
+# ============================================================
+# GitHub Actions - Terraform Infrastructure Pipeline
+# ============================================================
+
+name: "Terraform"
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - "terraform/**"
+
+permissions:
+  id-token: write       # For OIDC auth with Azure
+  contents: read
+  pull-requests: write  # For PR comments
+
+env:
+  TF_VERSION: "1.9.8"
+  TF_WORKING_DIR: "./terraform"
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: true
+
+jobs:
+  # ============================================================
+  # Job 1: Terraform Validate & Format Check
+  # ============================================================
+  validate:
+    name: "Validate"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        continue-on-error: true
+
+      - name: Terraform Init (validate only)
+        id: init
+        run: terraform init -backend=false
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Comment PR - Validate Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `## Terraform Validation
+            | Step | Result |
+            |------|--------|
+            | Format | ${{ steps.fmt.outcome == 'success' && '✅ Pass' || '⚠️ Needs formatting' }} |
+            | Init | ${{ steps.init.outcome == 'success' && '✅ Pass' || '❌ Fail' }} |
+            | Validate | ${{ steps.validate.outcome == 'success' && '✅ Pass' || '❌ Fail' }} |
+
+            *Triggered by: @${{ github.actor }}, Workflow: \`${{ github.workflow }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+  # ============================================================
+  # Job 2: Security Scan
+  # ============================================================
+  security:
+    name: "Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          soft_fail: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          soft_fail: true
+          output_format: github_failed_only
+
+  # ============================================================
+  # Job 3: Terraform Plan - Dev
+  # ============================================================
+  plan-dev:
+    name: "Plan Dev"
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/develop'
+    environment: dev-plan
+    env:
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD_DEV }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init (Dev)
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=openclaw-dev.terraform.tfstate"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Plan (Dev)
+        id: plan
+        run: |
+          terraform plan \
+            -var-file="environments/dev/terraform.tfvars" \
+            -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -var="postgres_admin_password=${{ secrets.POSTGRES_ADMIN_PASSWORD_DEV }}" \
+            -no-color \
+            -out=tfplan-dev 2>&1 | tee plan-output.txt
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        continue-on-error: true
+
+      - name: Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+        with:
+          script: |
+            const planOutput = require('fs').readFileSync('terraform/plan-output.txt', 'utf8');
+            const truncated = planOutput.length > 60000 ? planOutput.substring(0, 60000) + '\n...(truncated)' : planOutput;
+            const body = `## Terraform Plan - Dev Environment
+            \`\`\`terraform
+            ${truncated}
+            \`\`\`
+            *Plan result: ${{ steps.plan.outcome }}*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-dev-${{ github.run_id }}
+          path: terraform/tfplan-dev
+          retention-days: 5
+
+  # ============================================================
+  # Job 4: Terraform Apply - Dev (auto on develop branch)
+  # ============================================================
+  apply-dev:
+    name: "Apply Dev"
+    runs-on: ubuntu-latest
+    needs: [plan-dev]
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment: dev
+    env:
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD_DEV }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-dev-${{ github.run_id }}
+          path: terraform/
+
+      - name: Terraform Init (Dev)
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=openclaw-dev.terraform.tfstate"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Apply (Dev)
+        run: terraform apply tfplan-dev
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Save Outputs
+        run: terraform output -json > tf-outputs-dev.json
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Upload Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-outputs-dev
+          path: terraform/tf-outputs-dev.json
+
+  # ============================================================
+  # Job 5: Terraform Plan - Prod (on main)
+  # ============================================================
+  plan-prod:
+    name: "Plan Prod"
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: github.ref == 'refs/heads/main'
+    environment: prod-plan
+    env:
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD_PROD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init (Prod)
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=openclaw-prod.terraform.tfstate"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Plan (Prod)
+        run: |
+          terraform plan \
+            -var-file="environments/prod/terraform.tfvars" \
+            -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -var="postgres_admin_password=${{ secrets.POSTGRES_ADMIN_PASSWORD_PROD }}" \
+            -no-color \
+            -out=tfplan-prod
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-prod-${{ github.run_id }}
+          path: terraform/tfplan-prod
+          retention-days: 5
+
+  # ============================================================
+  # Job 6: Terraform Apply - Prod (requires manual approval)
+  # ============================================================
+  apply-prod:
+    name: "Apply Prod"
+    runs-on: ubuntu-latest
+    needs: [plan-prod]
+    if: github.ref == 'refs/heads/main'
+    environment: prod              # Requires manual approval in GitHub environment settings
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-prod-${{ github.run_id }}
+          path: terraform/
+
+      - name: Terraform Init (Prod)
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_BACKEND_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=openclaw-prod.terraform.tfstate"
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Apply (Prod)
+        run: terraform apply tfplan-prod
+        working-directory: ${{ env.TF_WORKING_DIR }}

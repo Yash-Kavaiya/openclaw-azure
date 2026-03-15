@@ -1,0 +1,500 @@
+# ============================================================
+# OpenClaw - Azure DevOps CI/CD Pipeline
+# Full pipeline: Build -> Test -> Terraform Plan/Apply -> Deploy
+# ============================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - "release/*"
+  paths:
+    include:
+      - app/**
+      - terraform/**
+      - Dockerfile
+      - azure-pipelines.yml
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - app/**
+      - terraform/**
+      - Dockerfile
+
+# ---- Global Variables ----
+variables:
+  # Pipeline
+  - name: PYTHON_VERSION
+    value: "3.12"
+  - name: TERRAFORM_VERSION
+    value: "1.9.8"
+
+  # Container Registry (set in pipeline variable groups or here)
+  - name: ACR_NAME
+    value: "$(TF_VAR_ACR_NAME)"         # set in variable group
+  - name: IMAGE_NAME
+    value: "openclaw"
+  - name: IMAGE_TAG
+    value: "$(Build.BuildId)"
+
+  # Environments
+  - name: DEV_ENV
+    value: "dev"
+  - name: PROD_ENV
+    value: "prod"
+
+  # Variable groups (define in ADO Library)
+  - group: "openclaw-global"            # subscription_id, etc.
+  - group: "openclaw-dev-secrets"       # dev env secrets
+  - group: "openclaw-prod-secrets"      # prod env secrets (protected)
+
+# ---- Pool ----
+pool:
+  vmImage: "ubuntu-24.04"
+
+# ============================================================
+# STAGES
+# ============================================================
+stages:
+
+# ============================================================
+# Stage 1: Build & Test
+# ============================================================
+- stage: BuildTest
+  displayName: "Build & Test"
+  jobs:
+
+  # ---- Job: Lint & Unit Tests ----
+  - job: Test
+    displayName: "Lint, Type-check & Unit Tests"
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: "$(PYTHON_VERSION)"
+        addToPath: true
+      displayName: "Setup Python $(PYTHON_VERSION)"
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install ruff mypy pytest pytest-asyncio pytest-cov httpx
+        pip install -r app/requirements.txt
+      displayName: "Install dependencies"
+
+    - script: ruff check app/ --output-format=github
+      displayName: "Lint with Ruff"
+      continueOnError: false
+
+    - script: |
+        cd app
+        python -m pytest tests/ \
+          --cov=. \
+          --cov-report=xml:$(Build.SourcesDirectory)/coverage.xml \
+          --cov-report=html:$(Build.SourcesDirectory)/coverage-html \
+          --junitxml=$(Build.SourcesDirectory)/test-results.xml \
+          -v
+      displayName: "Run unit tests"
+
+    - task: PublishTestResults@2
+      condition: always()
+      inputs:
+        testResultsFormat: "JUnit"
+        testResultsFiles: "test-results.xml"
+        testRunTitle: "OpenClaw Unit Tests"
+
+    - task: PublishCodeCoverageResults@2
+      condition: always()
+      inputs:
+        summaryFileLocation: "coverage.xml"
+        pathToSources: "$(Build.SourcesDirectory)/app"
+
+  # ---- Job: Docker Build ----
+  - job: DockerBuild
+    displayName: "Build & Push Docker Image"
+    dependsOn: Test
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    steps:
+    - task: Docker@2
+      displayName: "Login to ACR"
+      inputs:
+        command: "login"
+        containerRegistry: "$(ACR_SERVICE_CONNECTION)"  # ADO service connection
+
+    - task: Docker@2
+      displayName: "Build Docker image"
+      inputs:
+        command: "build"
+        repository: "$(ACR_NAME).azurecr.io/$(IMAGE_NAME)"
+        dockerfile: "Dockerfile"
+        buildContext: "$(Build.SourcesDirectory)"
+        tags: |
+          $(IMAGE_TAG)
+          latest
+        arguments: "--build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) --build-arg VCS_REF=$(Build.SourceVersion)"
+
+    - task: Docker@2
+      displayName: "Push Docker image to ACR"
+      inputs:
+        command: "push"
+        repository: "$(ACR_NAME).azurecr.io/$(IMAGE_NAME)"
+        tags: |
+          $(IMAGE_TAG)
+          latest
+
+    - script: |
+        echo "##vso[task.setvariable variable=imageTag;isOutput=true]$(IMAGE_TAG)"
+        echo "##vso[task.setvariable variable=imageFull;isOutput=true]$(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG)"
+      name: imageVars
+      displayName: "Export image variables"
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: "$(Build.SourcesDirectory)"
+        artifact: "source"
+
+
+# ============================================================
+# Stage 2: Terraform Plan (Dev)
+# ============================================================
+- stage: TerraformPlanDev
+  displayName: "Terraform Plan - Dev"
+  dependsOn: BuildTest
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+  variables:
+    TF_ENV: dev
+    TF_VAR_FILE: "terraform/environments/dev/terraform.tfvars"
+  jobs:
+
+  - job: TerraformPlan
+    displayName: "Terraform Plan (Dev)"
+    steps:
+    - task: TerraformInstaller@1
+      inputs:
+        terraformVersion: "$(TERRAFORM_VERSION)"
+      displayName: "Install Terraform $(TERRAFORM_VERSION)"
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Init (Dev)"
+      inputs:
+        provider: "azurerm"
+        command: "init"
+        workingDirectory: "$(System.DefaultWorkingDirectory)/terraform"
+        backendServiceArm: "$(AZURE_SERVICE_CONNECTION)"
+        backendAzureRmResourceGroupName: "$(TF_BACKEND_RG)"
+        backendAzureRmStorageAccountName: "$(TF_BACKEND_SA)"
+        backendAzureRmContainerName: "tfstate"
+        backendAzureRmKey: "openclaw-dev.terraform.tfstate"
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Validate"
+      inputs:
+        provider: "azurerm"
+        command: "validate"
+        workingDirectory: "$(System.DefaultWorkingDirectory)/terraform"
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Plan (Dev)"
+      inputs:
+        provider: "azurerm"
+        command: "plan"
+        workingDirectory: "$(System.DefaultWorkingDirectory)/terraform"
+        commandOptions: >
+          -var-file=$(TF_VAR_FILE)
+          -var="subscription_id=$(ARM_SUBSCRIPTION_ID)"
+          -var="postgres_admin_password=$(POSTGRES_ADMIN_PASSWORD_DEV)"
+          -out=tfplan-dev
+        environmentServiceNameAzureRM: "$(AZURE_SERVICE_CONNECTION)"
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: "$(System.DefaultWorkingDirectory)/terraform/tfplan-dev"
+        artifact: "tfplan-dev"
+
+
+# ============================================================
+# Stage 3: Terraform Apply (Dev)
+# ============================================================
+- stage: TerraformApplyDev
+  displayName: "Terraform Apply - Dev"
+  dependsOn: TerraformPlanDev
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+  jobs:
+
+  - deployment: TerraformApply
+    displayName: "Terraform Apply (Dev)"
+    environment: "openclaw-dev"     # ADO Environment with approval gate if needed
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: "$(TERRAFORM_VERSION)"
+
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifact: "tfplan-dev"
+              path: "$(System.DefaultWorkingDirectory)/terraform"
+
+          - task: TerraformTaskV4@4
+            displayName: "Terraform Apply (Dev)"
+            inputs:
+              provider: "azurerm"
+              command: "apply"
+              workingDirectory: "$(System.DefaultWorkingDirectory)/terraform"
+              commandOptions: "tfplan-dev"
+              environmentServiceNameAzureRM: "$(AZURE_SERVICE_CONNECTION)"
+
+
+# ============================================================
+# Stage 4: Deploy to Dev
+# ============================================================
+- stage: DeployDev
+  displayName: "Deploy to Dev"
+  dependsOn:
+    - BuildTest
+    - TerraformApplyDev
+  condition: |
+    and(
+      in(dependencies.BuildTest.result, 'Succeeded'),
+      in(dependencies.TerraformApplyDev.result, 'Succeeded', 'Skipped'),
+      eq(variables['Build.SourceBranch'], 'refs/heads/develop')
+    )
+  variables:
+    DEPLOY_ENV: dev
+  jobs:
+
+  - deployment: Deploy
+    displayName: "Deploy OpenClaw to Dev VMs"
+    environment: "openclaw-dev"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: "Get VM details"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                VMS=$(az vm list -g openclaw-dev-rg --query "[].name" -o tsv)
+                echo "VMs: $VMS"
+                echo "##vso[task.setvariable variable=VM_LIST]$VMS"
+
+          - task: AzureCLI@2
+            displayName: "Rolling deploy via Run Command"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                RG="openclaw-dev-rg"
+                IMAGE="$(ACR_NAME).azurecr.io/openclaw:$(Build.BuildId)"
+
+                for VM in $(az vm list -g $RG --query "[].name" -o tsv); do
+                  echo "Deploying to $VM..."
+                  az vm run-command invoke \
+                    -g $RG -n $VM \
+                    --command-id RunShellScript \
+                    --scripts "
+                      set -e
+                      echo '$ACR_ADMIN_PASSWORD_DEV' | docker login $(ACR_NAME).azurecr.io -u $(ACR_ADMIN_USERNAME) --password-stdin
+                      docker pull $IMAGE
+                      docker stop openclaw || true
+                      docker rm openclaw || true
+                      docker run -d --name openclaw --restart always \
+                        --env-file /etc/openclaw/environment \
+                        -e IMAGE_TAG=$(Build.BuildId) \
+                        -p 8000:8000 \
+                        $IMAGE
+                      sleep 10
+                      curl -f http://localhost:8000/api/health || exit 1
+                      echo 'Deploy successful on $VM'
+                    "
+                  echo "✓ Deployed to $VM"
+                done
+
+          - task: AzureCLI@2
+            displayName: "Smoke test"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                VM_IP=$(az vm list-ip-addresses -g openclaw-dev-rg --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" -o tsv)
+                echo "Testing: http://$VM_IP/api/health"
+                curl -f "http://$VM_IP/api/health" || exit 1
+                echo "Smoke test passed!"
+
+
+# ============================================================
+# Stage 5: Terraform Plan (Prod) - manual gate
+# ============================================================
+- stage: TerraformPlanProd
+  displayName: "Terraform Plan - Prod"
+  dependsOn: DeployDev
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  variables:
+    TF_VAR_FILE: "terraform/environments/prod/terraform.tfvars"
+  jobs:
+
+  - job: TerraformPlanProd
+    displayName: "Terraform Plan (Prod)"
+    steps:
+    - task: TerraformInstaller@1
+      inputs:
+        terraformVersion: "$(TERRAFORM_VERSION)"
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Init (Prod)"
+      inputs:
+        provider: "azurerm"
+        command: "init"
+        workingDirectory: "$(System.DefaultWorkingDirectory)/terraform"
+        backendServiceArm: "$(AZURE_SERVICE_CONNECTION)"
+        backendAzureRmResourceGroupName: "$(TF_BACKEND_RG)"
+        backendAzureRmStorageAccountName: "$(TF_BACKEND_SA)"
+        backendAzureRmContainerName: "tfstate"
+        backendAzureRmKey: "openclaw-prod.terraform.tfstate"
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Plan (Prod)"
+      inputs:
+        provider: "azurerm"
+        command: "plan"
+        workingDirectory: "$(System.DefaultWorkingDirectory)/terraform"
+        commandOptions: >
+          -var-file=$(TF_VAR_FILE)
+          -var="subscription_id=$(ARM_SUBSCRIPTION_ID)"
+          -var="postgres_admin_password=$(POSTGRES_ADMIN_PASSWORD_PROD)"
+          -out=tfplan-prod
+        environmentServiceNameAzureRM: "$(AZURE_SERVICE_CONNECTION)"
+
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: "$(System.DefaultWorkingDirectory)/terraform/tfplan-prod"
+        artifact: "tfplan-prod"
+
+
+# ============================================================
+# Stage 6: Terraform Apply (Prod) + Deploy Prod (requires approval)
+# ============================================================
+- stage: TerraformApplyProd
+  displayName: "Terraform Apply - Prod"
+  dependsOn: TerraformPlanProd
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+
+  - deployment: TerraformApplyProd
+    displayName: "Terraform Apply (Prod)"
+    environment: "openclaw-prod"    # Has approval gate configured in ADO
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: "$(TERRAFORM_VERSION)"
+
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifact: "tfplan-prod"
+              path: "$(System.DefaultWorkingDirectory)/terraform"
+
+          - task: TerraformTaskV4@4
+            displayName: "Terraform Apply (Prod)"
+            inputs:
+              provider: "azurerm"
+              command: "apply"
+              workingDirectory: "$(System.DefaultWorkingDirectory)/terraform"
+              commandOptions: "tfplan-prod"
+              environmentServiceNameAzureRM: "$(AZURE_SERVICE_CONNECTION)"
+
+
+- stage: DeployProd
+  displayName: "Deploy to Prod"
+  dependsOn: TerraformApplyProd
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+
+  - deployment: DeployProd
+    displayName: "Blue-Green Deploy to Prod"
+    environment: "openclaw-prod"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            displayName: "Blue-Green rolling deploy to Prod"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                RG="openclaw-prod-rg"
+                IMAGE="$(ACR_NAME).azurecr.io/openclaw:$(Build.BuildId)"
+                VMS=($(az vm list -g $RG --query "[].name" -o tsv))
+                TOTAL=${#VMS[@]}
+
+                echo "Starting rolling deploy of $IMAGE to $TOTAL prod VMs"
+
+                for i in "${!VMS[@]}"; do
+                  VM="${VMS[$i]}"
+                  echo "[$((i+1))/$TOTAL] Deploying to $VM..."
+                  az vm run-command invoke \
+                    -g $RG -n $VM \
+                    --command-id RunShellScript \
+                    --scripts "
+                      set -e
+                      echo '$ACR_ADMIN_PASSWORD_PROD' | docker login $(ACR_NAME).azurecr.io -u $(ACR_ADMIN_USERNAME) --password-stdin
+                      docker pull $IMAGE
+                      # Blue-green swap
+                      docker rename openclaw openclaw-old 2>/dev/null || true
+                      docker run -d --name openclaw --restart always \
+                        --env-file /etc/openclaw/environment \
+                        -p 8000:8000 $IMAGE
+                      sleep 15
+                      curl -f http://localhost:8000/api/health || { docker stop openclaw; docker rename openclaw-old openclaw; docker start openclaw; exit 1; }
+                      docker stop openclaw-old 2>/dev/null || true
+                      docker rm openclaw-old 2>/dev/null || true
+                    "
+                  echo "✓ [$((i+1))/$TOTAL] $VM deployed successfully"
+                done
+
+          - task: AzureCLI@2
+            displayName: "Production smoke tests"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                VM_IP=$(az vm list-ip-addresses -g openclaw-prod-rg --query "[0].virtualMachine.network.publicIpAddresses[0].ipAddress" -o tsv)
+                echo "Testing production at: http://$VM_IP"
+
+                # Health check
+                curl -f "http://$VM_IP/api/health" || exit 1
+
+                # Detailed health
+                curl -f "http://$VM_IP/api/health/detailed" || exit 1
+
+                echo "All production smoke tests passed!"
+
+          - task: AzureCLI@2
+            displayName: "Tag release in ACR"
+            inputs:
+              azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az acr import \
+                  --name $(ACR_NAME) \
+                  --source $(ACR_NAME).azurecr.io/openclaw:$(Build.BuildId) \
+                  --image openclaw:prod-$(Build.BuildId) \
+                  --force
+                echo "Tagged as prod-$(Build.BuildId)"

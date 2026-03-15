@@ -1,0 +1,88 @@
+# ============================================================
+# GitHub Actions - PR Quality Gate
+# ============================================================
+
+name: "PR Check"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  # ---- Quick Lint ----
+  lint:
+    name: "Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check app/ --output-format=github
+
+  # ---- Terraform Lint ----
+  tf-lint:
+    name: "Terraform Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - run: terraform fmt -check -recursive
+        working-directory: terraform
+      - uses: terraform-linters/setup-tflint@v4
+      - run: |
+          tflint --init
+          tflint --recursive
+        working-directory: terraform
+
+  # ---- Docker Build Test ----
+  docker-build:
+    name: "Docker Build"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t openclaw:test .
+
+  # ---- PR Summary ----
+  pr-summary:
+    name: "PR Summary"
+    runs-on: ubuntu-latest
+    needs: [lint, tf-lint, docker-build]
+    if: always()
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const checks = {
+              'Code Lint': '${{ needs.lint.result }}',
+              'Terraform Lint': '${{ needs.tf-lint.result }}',
+              'Docker Build': '${{ needs.docker-build.result }}',
+            };
+
+            const rows = Object.entries(checks).map(([k, v]) =>
+              `| ${k} | ${v === 'success' ? '✅ Pass' : v === 'skipped' ? '⏭️ Skip' : '❌ Fail'} |`
+            ).join('\n');
+
+            const allPass = Object.values(checks).every(v => v === 'success' || v === 'skipped');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## PR Check Results ${allPass ? '✅' : '❌'}
+
+            | Check | Status |
+            |-------|--------|
+            ${rows}
+
+            ${allPass ? '🎉 All checks passed! This PR is ready for review.' : '⚠️ Some checks failed. Please fix before merging.'}`
+            });
