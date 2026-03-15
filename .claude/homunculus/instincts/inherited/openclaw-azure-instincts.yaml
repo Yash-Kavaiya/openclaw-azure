@@ -1,0 +1,286 @@
+# Instincts generated from https://github.com/Yash-Kavaiya/openclaw-azure
+# Generated: 2026-03-15T12:45:17.956Z
+# Version: 2.0
+
+---
+id: openclaw-azure-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Commit Length
+
+## Action
+
+Keep commit messages concise (under 50 characters)
+
+## Evidence
+
+- Average commit message length: 40 chars
+- Based on 2 commits
+
+---
+id: openclaw-azure-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: openclaw-azure-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Export Style
+
+## Action
+
+Prefer mixed exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: mixed
+
+---
+id: openclaw-azure-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: openclaw-azure-python-file-naming
+trigger: "When creating new Python files"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Python File Naming
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Pattern detected in existing Python files
+- Consistent camelCase usage in codebase
+
+---
+id: openclaw-azure-function-naming
+trigger: "When defining Python functions"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Function Naming
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Function naming pattern analysis
+- Consistent camelCase in Python modules
+
+---
+id: openclaw-azure-class-naming
+trigger: "When defining Python classes"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Class Naming
+
+## Action
+
+Use PascalCase naming convention
+
+## Evidence
+
+- Class naming pattern analysis
+- PascalCase detected in existing classes
+
+---
+id: openclaw-azure-constants-naming
+trigger: "When defining constants"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Constants Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE naming convention
+
+## Evidence
+
+- Constants naming pattern analysis
+- SCREAMING_SNAKE_CASE usage detected
+
+---
+id: openclaw-azure-commit-format
+trigger: "When making commits for new features"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Commit Format
+
+## Action
+
+Use 'feat:' prefix with descriptive message around 40 characters
+
+## Evidence
+
+- feat: Full Azure pipeline - Terraform infra + CI/CD + FastAPI app
+- Average commit length of 40 characters
+
+---
+id: openclaw-azure-test-separation
+trigger: "When writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Test Separation
+
+## Action
+
+Place tests in separate directory structure from source code
+
+## Evidence
+
+- Test location identified as separate
+- Folder structure analysis shows test separation
+
+---
+id: openclaw-azure-infrastructure-organization
+trigger: "When adding infrastructure code"
+confidence: 0.9
+domain: architecture
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Infrastructure Organization
+
+## Action
+
+Place Terraform files in dedicated 'terraform' folder
+
+## Evidence
+
+- terraform folder present in common folders
+- Infrastructure separation pattern
+
+---
+id: openclaw-azure-app-structure
+trigger: "When organizing application code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure App Structure
+
+## Action
+
+Use 'app' folder for main application code
+
+## Evidence
+
+- app folder in common folders
+- Single-package architecture with app organization
+
+---
+id: openclaw-azure-ci-cd-setup
+trigger: "When setting up CI/CD workflows"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Ci Cd Setup
+
+## Action
+
+Create separate workflow files for deploy, PR checks, and terraform
+
+## Evidence
+
+- .github/workflows/deploy.yml
+- .github/workflows/pr-check.yml
+- .github/workflows/terraform.yml
+
+---
+id: openclaw-azure-containerization
+trigger: "When containerizing the application"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: Yash-Kavaiya/openclaw-azure
+---
+
+# Openclaw Azure Containerization
+
+## Action
+
+Use both Dockerfile and docker-compose.yml for container setup
+
+## Evidence
+
+- Dockerfile present
+- docker-compose.yml present
+- Container-based deployment pattern
+
