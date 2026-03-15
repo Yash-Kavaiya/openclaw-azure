@@ -1,0 +1,11 @@
+variable "prefix" { type = string }
+variable "resource_group_name" { type = string }
+variable "location" { type = string }
+variable "tags" { type = map(string) }
+variable "vnet_address_space" { type = list(string) }
+variable "subnet_app_prefix" { type = string }
+variable "subnet_db_prefix" { type = string }
+variable "subnet_bastion_prefix" { type = string }
+variable "subnet_agw_prefix" { type = string }
+variable "allowed_ssh_ips" { type = list(string) }
+variable "enable_bastion" { type = bool }
