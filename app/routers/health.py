@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from datetime import datetime
-import os
 
 from database import get_db
 from config import settings

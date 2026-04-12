@@ -2,10 +2,9 @@
 OpenClaw - Azure Hosted Legal Research Platform
 Main FastAPI Application Entry Point
 """
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import uvicorn
