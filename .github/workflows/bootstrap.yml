@@ -1,0 +1,92 @@
+# ============================================================
+# GitHub Actions - One-Time Bootstrap (Terraform State Backend)
+# Run ONCE via workflow_dispatch to create the storage account
+# for Terraform remote state.
+# ============================================================
+
+name: "Bootstrap"
+
+on:
+  workflow_dispatch:
+    inputs:
+      location:
+        description: "Azure region"
+        required: true
+        default: "centralindia"
+        type: choice
+        options:
+          - centralindia
+          - eastus2
+          - westeurope
+          - southeastasia
+      storage_account_name:
+        description: "Storage account name for TF state (3-24 lowercase alphanumeric)"
+        required: true
+        default: "openclawtfstate"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: "openclaw-tfstate-rg"
+
+jobs:
+  bootstrap:
+    name: "Bootstrap TF State Backend"
+    runs-on: ubuntu-latest
+    environment: bootstrap
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Create Resource Group
+        run: |
+          az group create \
+            --name "${{ env.RESOURCE_GROUP }}" \
+            --location "${{ inputs.location }}" \
+            --tags Project=openclaw ManagedBy=bootstrap
+
+      - name: Create Storage Account
+        run: |
+          az storage account create \
+            --name "${{ inputs.storage_account_name }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --location "${{ inputs.location }}" \
+            --sku Standard_LRS \
+            --min-tls-version TLS1_2 \
+            --allow-blob-public-access false \
+            --https-only true \
+            --tags Project=openclaw ManagedBy=bootstrap
+
+      - name: Enable Versioning
+        run: |
+          az storage account blob-service-properties update \
+            --account-name "${{ inputs.storage_account_name }}" \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --enable-versioning true
+
+      - name: Create State Container
+        run: |
+          az storage container create \
+            --name tfstate \
+            --account-name "${{ inputs.storage_account_name }}" \
+            --auth-mode login
+
+      - name: Print Summary
+        run: |
+          echo "=================================================="
+          echo "  ✅ Bootstrap complete!"
+          echo "=================================================="
+          echo ""
+          echo "  Now set these GitHub Secrets:"
+          echo "    TF_BACKEND_RG = ${{ env.RESOURCE_GROUP }}"
+          echo "    TF_BACKEND_SA = ${{ inputs.storage_account_name }}"
+          echo ""
+          echo "  Then push to develop branch to trigger Terraform."
+          echo "=================================================="

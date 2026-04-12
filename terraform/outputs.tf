@@ -94,3 +94,9 @@ output "ssh_command" {
   description = "SSH command to connect to first VM"
   value       = length(module.compute.vm_public_ips) > 0 ? "ssh ${var.vm_admin_username}@${module.compute.vm_public_ips[0]}" : "Use Azure Bastion"
 }
+
+output "ssh_private_key" {
+  description = "Generated SSH private key (save to Key Vault or download securely)"
+  value       = tls_private_key.ssh.private_key_pem
+  sensitive   = true
+}

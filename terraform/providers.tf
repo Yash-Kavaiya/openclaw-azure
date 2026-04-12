@@ -20,13 +20,13 @@ terraform {
     }
   }
 
-  # Remote state in Azure Storage (uncomment after bootstrapping)
-  # backend "azurerm" {
-  #   resource_group_name  = "openclaw-tfstate-rg"
-  #   storage_account_name = "openclawtfstate"
-  #   container_name       = "tfstate"
-  #   key                  = "openclaw.terraform.tfstate"
-  # }
+  # backend "azurerm" {}
+  backend "azurerm" {
+    resource_group_name  = "openclaw-tfstate-rg"
+    storage_account_name = "openclawtfstate"
+    container_name       = "tfstate"
+    key                  = "openclaw.terraform.tfstate"
+  }
 }
 
 provider "azurerm" {

@@ -155,6 +155,7 @@ jobs:
             -var-file="environments/dev/terraform.tfvars" \
             -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
             -var="postgres_admin_password=${{ secrets.POSTGRES_ADMIN_PASSWORD_DEV }}" \
+            -var="ssh_public_key_path=" \
             -no-color \
             -out=tfplan-dev 2>&1 | tee plan-output.txt
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -241,6 +242,29 @@ jobs:
         run: terraform output -json > tf-outputs-dev.json
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      - name: Store SSH Key in Key Vault
+        run: |
+          KV_NAME=$(cd ${{ env.TF_WORKING_DIR }} && terraform output -raw key_vault_name 2>/dev/null || echo "")
+          if [ -n "$KV_NAME" ]; then
+            SSH_KEY=$(cd ${{ env.TF_WORKING_DIR }} && terraform output -raw ssh_private_key 2>/dev/null || echo "")
+            if [ -n "$SSH_KEY" ]; then
+              echo "$SSH_KEY" | az keyvault secret set --vault-name "$KV_NAME" --name ssh-private-key --file /dev/stdin
+              echo "✅ SSH private key stored in Key Vault: $KV_NAME"
+            fi
+          fi
+
+      - name: Print Deploy Info
+        run: |
+          echo "==========================================="
+          echo "  Dev Environment Deployed!"
+          echo "==========================================="
+          cd ${{ env.TF_WORKING_DIR }}
+          echo "Resource Group: $(terraform output -raw resource_group_name 2>/dev/null || echo 'N/A')"
+          echo "App URL: $(terraform output -raw app_url 2>/dev/null || echo 'N/A')"
+          echo "ACR: $(terraform output -raw acr_login_server 2>/dev/null || echo 'N/A')"
+          echo "PostgreSQL: $(terraform output -raw postgres_fqdn 2>/dev/null || echo 'N/A')"
+          echo "==========================================="
+
       - name: Upload Outputs
         uses: actions/upload-artifact@v4
         with:
@@ -291,6 +315,7 @@ jobs:
             -var-file="environments/prod/terraform.tfvars" \
             -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
             -var="postgres_admin_password=${{ secrets.POSTGRES_ADMIN_PASSWORD_PROD }}" \
+            -var="ssh_public_key_path=" \
             -no-color \
             -out=tfplan-prod
         working-directory: ${{ env.TF_WORKING_DIR }}

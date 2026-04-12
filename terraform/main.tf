@@ -92,7 +92,7 @@ module "compute" {
   vm_disk_type          = var.vm_disk_type
   vm_admin_username     = var.vm_admin_username
   vm_count              = var.vm_count
-  ssh_public_key        = file(var.ssh_public_key_path)
+  ssh_public_key        = var.ssh_public_key != "" ? var.ssh_public_key : tls_private_key.ssh.public_key_openssh
   acr_login_server      = azurerm_container_registry.acr.login_server
   acr_admin_username    = azurerm_container_registry.acr.admin_username
   acr_admin_password    = azurerm_container_registry.acr.admin_password
@@ -202,6 +202,12 @@ resource "azurerm_monitor_metric_alert" "cpu" {
       action_group_id = action.value.id
     }
   }
+}
+
+# ---- SSH Key (generated in Terraform for CI/CD) ----
+resource "tls_private_key" "ssh" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
 }
 
 # ---- Random secrets ----

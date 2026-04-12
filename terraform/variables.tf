@@ -197,9 +197,15 @@ variable "alert_email" {
 
 # ---- SSH ----
 variable "ssh_public_key_path" {
-  description = "Path to SSH public key for VM access"
+  description = "Path to SSH public key for VM access (ignored if ssh_public_key is set)"
   type        = string
-  default     = "~/.ssh/id_rsa.pub"
+  default     = ""
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key content (if provided, overrides ssh_public_key_path). Leave empty to auto-generate."
+  type        = string
+  default     = ""
 }
 
 variable "allowed_ssh_ips" {
