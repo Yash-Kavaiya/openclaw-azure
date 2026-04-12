@@ -7,6 +7,6 @@ variable "object_id" { type = string }
 variable "key_vault_sku" { type = string }
 
 variable "secrets" {
-  type      = map(string)
-  sensitive = true
+  description = "Map of secret names to values to store in Key Vault. Keys are not sensitive (used in for_each)."
+  type        = map(string)
 }

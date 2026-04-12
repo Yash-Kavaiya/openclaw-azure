@@ -20,7 +20,6 @@ terraform {
     }
   }
 
-  # backend "azurerm" {}
   backend "azurerm" {
     resource_group_name  = "openclaw-tfstate-rg"
     storage_account_name = "openclawtfstate"
@@ -37,8 +36,7 @@ provider "azurerm" {
     }
     virtual_machine {
       delete_os_disk_on_deletion     = true
-      graceful_shutdown              = false
-      skip_shutdown_and_force_delete = false
+      skip_shutdown_and_force_delete  = false
     }
   }
   subscription_id = var.subscription_id

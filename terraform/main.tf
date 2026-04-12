@@ -55,11 +55,11 @@ module "security" {
 
   secrets = merge(
     {
-      jwt-secret-key = random_password.jwt_secret.result
-      app-secret-key = random_password.app_secret.result
+      jwt-secret-key = nonsensitive(random_password.jwt_secret.result)
+      app-secret-key = nonsensitive(random_password.app_secret.result)
     },
     var.enable_database ? {
-      postgres-admin-password = var.postgres_admin_password
+      postgres-admin-password = nonsensitive(var.postgres_admin_password)
     } : {}
   )
 }
