@@ -19,16 +19,17 @@ class Settings(BaseSettings):
     PORT: int = int(os.getenv("PORT", 8000))
     WORKERS: int = int(os.getenv("WORKERS", 4))
 
-    # Database (Azure PostgreSQL Flexible Server)
+    # Database — defaults to SQLite (no external DB required)
+    # Set DATABASE_URL=postgresql+asyncpg://... for Azure PostgreSQL
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+asyncpg://openclaw:openclaw@localhost:5432/openclaw",
+        "sqlite+aiosqlite:///./openclaw.db",
     )
     DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", 10))
     DB_MAX_OVERFLOW: int = int(os.getenv("DB_MAX_OVERFLOW", 20))
 
-    # Redis (Azure Cache for Redis)
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    # Redis (optional — app works without it)
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
 
     # Azure Storage
     AZURE_STORAGE_CONNECTION_STRING: str = os.getenv(

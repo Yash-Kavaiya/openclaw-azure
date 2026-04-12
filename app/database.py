@@ -1,6 +1,6 @@
 """
 Database Configuration for OpenClaw
-Uses SQLAlchemy async engine with PostgreSQL (Azure PostgreSQL Flexible Server).
+Supports PostgreSQL (Azure) or SQLite (lightweight/dev).
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -11,13 +11,22 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_pre_ping=True,
-    echo=settings.DEBUG,
-)
+# Use SQLite if no PostgreSQL URL configured
+_db_url = settings.DATABASE_URL
+_is_sqlite = _db_url.startswith("sqlite")
+
+_engine_kwargs = {
+    "echo": settings.DEBUG,
+}
+
+if not _is_sqlite:
+    _engine_kwargs.update({
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_pre_ping": True,
+    })
+
+engine = create_async_engine(_db_url, **_engine_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,

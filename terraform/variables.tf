@@ -20,7 +20,7 @@ variable "environment" {
 variable "location" {
   description = "Azure region for all resources"
   type        = string
-  default     = "East US 2"
+  default     = "Central India"
 }
 
 variable "project_name" {
@@ -33,6 +33,13 @@ variable "tags" {
   description = "Common tags applied to all resources"
   type        = map(string)
   default     = {}
+}
+
+# ---- Feature Flags ----
+variable "enable_database" {
+  description = "Deploy PostgreSQL + Redis (set false to use SQLite inside container)"
+  type        = bool
+  default     = false
 }
 
 # ---- Networking ----
@@ -100,10 +107,10 @@ variable "vm_count" {
 variable "enable_bastion" {
   description = "Enable Azure Bastion for secure VM access"
   type        = bool
-  default     = true
+  default     = false
 }
 
-# ---- Database ----
+# ---- Database (only used when enable_database = true) ----
 variable "postgres_sku" {
   description = "PostgreSQL Flexible Server SKU"
   type        = string
@@ -130,8 +137,9 @@ variable "postgres_admin_user" {
 }
 
 variable "postgres_admin_password" {
-  description = "PostgreSQL administrator password"
+  description = "PostgreSQL administrator password (required only when enable_database = true)"
   type        = string
+  default     = ""
   sensitive   = true
 }
 
@@ -141,11 +149,11 @@ variable "postgres_db_name" {
   default     = "openclaw"
 }
 
-# ---- Redis ----
+# ---- Redis (only used when enable_database = true) ----
 variable "redis_capacity" {
   description = "Redis Cache capacity"
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "redis_family" {
@@ -157,7 +165,7 @@ variable "redis_family" {
 variable "redis_sku" {
   description = "Redis Cache SKU (Basic, Standard, Premium)"
   type        = string
-  default     = "Standard"
+  default     = "Basic"
 }
 
 # ---- Application Gateway / Load Balancer ----
@@ -171,7 +179,7 @@ variable "enable_application_gateway" {
 variable "acr_sku" {
   description = "Azure Container Registry SKU (Basic, Standard, Premium)"
   type        = string
-  default     = "Standard"
+  default     = "Basic"
 }
 
 # ---- Key Vault ----

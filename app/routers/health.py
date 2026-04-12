@@ -2,7 +2,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-import redis.asyncio as aioredis
 from datetime import datetime
 import os
 
@@ -38,16 +37,24 @@ async def detailed_health_check(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         checks["database"] = f"unhealthy: {str(e)}"
 
-    # Redis check
-    try:
-        r = aioredis.from_url(settings.REDIS_URL)
-        await r.ping()
-        await r.close()
-        checks["redis"] = "healthy"
-    except Exception as e:
-        checks["redis"] = f"unhealthy: {str(e)}"
+    # Redis check (optional)
+    if settings.REDIS_URL:
+        try:
+            import redis.asyncio as aioredis
+            r = aioredis.from_url(settings.REDIS_URL)
+            await r.ping()
+            await r.close()
+            checks["redis"] = "healthy"
+        except Exception as e:
+            checks["redis"] = f"unhealthy: {str(e)}"
+    else:
+        checks["redis"] = "not configured"
 
-    overall = "healthy" if all(v == "healthy" for k, v in checks.items() if k not in ["timestamp", "environment"]) else "degraded"
+    overall = "healthy" if all(
+        v in ("healthy", "not configured")
+        for k, v in checks.items()
+        if k not in ["timestamp", "environment"]
+    ) else "degraded"
     checks["overall"] = overall
 
     return checks

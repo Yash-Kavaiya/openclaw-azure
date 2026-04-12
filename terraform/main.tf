@@ -11,6 +11,10 @@ locals {
     ManagedBy   = "Terraform"
     Repository  = "openclaw-azure"
   })
+
+  # Database URLs — use external DB if enabled, otherwise SQLite inside container
+  database_url = var.enable_database ? "postgresql+asyncpg://${var.postgres_admin_user}:${var.postgres_admin_password}@${module.database[0].postgres_fqdn}:5432/${var.postgres_db_name}" : "sqlite+aiosqlite:///./openclaw.db"
+  redis_url    = var.enable_database ? "rediss://:${module.database[0].redis_primary_key}@${module.database[0].redis_hostname}:6380/0" : ""
 }
 
 # ---- Resource Group ----
@@ -49,16 +53,21 @@ module "security" {
   object_id           = data.azurerm_client_config.current.object_id
   key_vault_sku       = var.key_vault_sku
 
-  secrets = {
-    postgres-admin-password = var.postgres_admin_password
-    jwt-secret-key          = random_password.jwt_secret.result
-    app-secret-key          = random_password.app_secret.result
-  }
+  secrets = merge(
+    {
+      jwt-secret-key = random_password.jwt_secret.result
+      app-secret-key = random_password.app_secret.result
+    },
+    var.enable_database ? {
+      postgres-admin-password = var.postgres_admin_password
+    } : {}
+  )
 }
 
-# ---- Database Module ----
+# ---- Database Module (OPTIONAL) ----
 module "database" {
   source = "./modules/database"
+  count  = var.enable_database ? 1 : 0
 
   prefix                  = local.prefix
   resource_group_name     = azurerm_resource_group.main.name
@@ -96,8 +105,8 @@ module "compute" {
   acr_login_server      = azurerm_container_registry.acr.login_server
   acr_admin_username    = azurerm_container_registry.acr.admin_username
   acr_admin_password    = azurerm_container_registry.acr.admin_password
-  database_url          = "postgresql+asyncpg://${var.postgres_admin_user}:${var.postgres_admin_password}@${module.database.postgres_fqdn}:5432/${var.postgres_db_name}"
-  redis_url             = "rediss://:${module.database.redis_primary_key}@${module.database.redis_hostname}:6380/0"
+  database_url          = local.database_url
+  redis_url             = local.redis_url
   key_vault_url         = module.security.key_vault_uri
   app_insights_conn_str = azurerm_application_insights.main.connection_string
   environment           = var.environment
@@ -119,17 +128,17 @@ resource "azurerm_container_registry" "acr" {
 
 # ---- Azure Storage Account ----
 resource "azurerm_storage_account" "main" {
-  name                     = replace("${local.prefix}sa", "-", "")
-  resource_group_name      = azurerm_resource_group.main.name
-  location                 = var.location
-  account_tier             = "Standard"
-  account_replication_type = var.environment == "prod" ? "GRS" : "LRS"
-  min_tls_version          = "TLS1_2"
+  name                       = replace("${local.prefix}sa", "-", "")
+  resource_group_name        = azurerm_resource_group.main.name
+  location                   = var.location
+  account_tier               = "Standard"
+  account_replication_type   = var.environment == "prod" ? "GRS" : "LRS"
+  min_tls_version            = "TLS1_2"
   https_traffic_only_enabled = true
-  tags                     = local.common_tags
+  tags                       = local.common_tags
 
   blob_properties {
-    versioning_enabled  = true
+    versioning_enabled = true
     delete_retention_policy {
       days = 7
     }

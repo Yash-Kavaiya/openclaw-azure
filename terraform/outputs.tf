@@ -24,12 +24,12 @@ output "vm_ids" {
 
 output "postgres_fqdn" {
   description = "PostgreSQL Flexible Server FQDN"
-  value       = module.database.postgres_fqdn
+  value       = var.enable_database ? module.database[0].postgres_fqdn : "N/A (SQLite mode)"
 }
 
 output "redis_hostname" {
   description = "Redis Cache hostname"
-  value       = module.database.redis_hostname
+  value       = var.enable_database ? module.database[0].redis_hostname : "N/A (disabled)"
 }
 
 output "acr_login_server" {
@@ -99,4 +99,9 @@ output "ssh_private_key" {
   description = "Generated SSH private key (save to Key Vault or download securely)"
   value       = tls_private_key.ssh.private_key_pem
   sensitive   = true
+}
+
+output "database_mode" {
+  description = "Database mode in use"
+  value       = var.enable_database ? "PostgreSQL + Redis (Azure managed)" : "SQLite (embedded)"
 }
