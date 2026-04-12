@@ -5,4 +5,8 @@ variable "tags" { type = map(string) }
 variable "tenant_id" { type = string }
 variable "object_id" { type = string }
 variable "key_vault_sku" { type = string }
-variable "secrets" { type = map(string); sensitive = true }
+
+variable "secrets" {
+  type      = map(string)
+  sensitive = true
+}
